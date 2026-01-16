@@ -1,7 +1,15 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import styles from './AddressConverter.module.css'
+
+interface AddressCandidate {
+  country: string
+  city: string
+  street: string
+  formatted_address: string
+  postal_code: string | null
+}
 
 export default function AddressConverter() {
   const [inputAddress, setInputAddress] = useState('')
@@ -11,6 +19,134 @@ export default function AddressConverter() {
   const [notes, setNotes] = useState<string | null>(null)
   const [isConverting, setIsConverting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  
+  // 자동완성 관련 상태
+  const [autocompleteCandidates, setAutocompleteCandidates] = useState<AddressCandidate[]>([])
+  const [isLoadingAutocomplete, setIsLoadingAutocomplete] = useState(false)
+  const [selectedIndex, setSelectedIndex] = useState(-1)
+  const [showAutocomplete, setShowAutocomplete] = useState(false)
+  const autocompleteRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null)
+
+  // 자동완성 함수
+  const fetchAutocomplete = useCallback(async (query: string) => {
+    const trimmed = query.trim()
+    if (trimmed.length < 2) {
+      setAutocompleteCandidates([])
+      setShowAutocomplete(false)
+      return
+    }
+
+    setIsLoadingAutocomplete(true)
+    setShowAutocomplete(true)
+
+    try {
+      const response = await fetch('/api/autocomplete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          query: trimmed,
+        }),
+      })
+
+      if (!response.ok) {
+        setAutocompleteCandidates([])
+        return
+      }
+
+      const data = await response.json()
+      setAutocompleteCandidates(data.candidates || [])
+      setSelectedIndex(-1)
+    } catch (err) {
+      console.error('Autocomplete error:', err)
+      setAutocompleteCandidates([])
+    } finally {
+      setIsLoadingAutocomplete(false)
+    }
+  }, [])
+
+  // debounce된 자동완성 호출
+  useEffect(() => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current)
+    }
+
+    if (inputAddress.trim().length >= 2) {
+      debounceTimerRef.current = setTimeout(() => {
+        fetchAutocomplete(inputAddress)
+      }, 400) // 400ms debounce
+    } else {
+      setAutocompleteCandidates([])
+      setShowAutocomplete(false)
+    }
+
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current)
+      }
+    }
+  }, [inputAddress, fetchAutocomplete])
+
+  // 외부 클릭 시 자동완성 닫기
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        autocompleteRef.current &&
+        !autocompleteRef.current.contains(event.target as Node) &&
+        inputRef.current &&
+        !inputRef.current.contains(event.target as Node)
+      ) {
+        setShowAutocomplete(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [])
+
+  // 자동완성 항목 선택
+  const selectCandidate = useCallback((candidate: AddressCandidate) => {
+    setInputAddress(candidate.formatted_address)
+    setAutocompleteCandidates([])
+    setShowAutocomplete(false)
+    setSelectedIndex(-1)
+    setError(null)
+  }, [])
+
+  // 키보드 네비게이션
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!showAutocomplete || autocompleteCandidates.length === 0) {
+      return
+    }
+
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault()
+        setSelectedIndex((prev) => 
+          prev < autocompleteCandidates.length - 1 ? prev + 1 : prev
+        )
+        break
+      case 'ArrowUp':
+        e.preventDefault()
+        setSelectedIndex((prev) => (prev > 0 ? prev - 1 : -1))
+        break
+      case 'Enter':
+        e.preventDefault()
+        if (selectedIndex >= 0 && selectedIndex < autocompleteCandidates.length) {
+          selectCandidate(autocompleteCandidates[selectedIndex])
+        }
+        break
+      case 'Escape':
+        setShowAutocomplete(false)
+        setSelectedIndex(-1)
+        break
+    }
+  }, [showAutocomplete, autocompleteCandidates, selectedIndex, selectCandidate])
 
   // 변환 함수 (영문 물류용 주소)
   const convertAddress = useCallback(async (address: string) => {
@@ -110,9 +246,10 @@ export default function AddressConverter() {
 
       <div className={styles.content}>
         {/* 주소 입력 */}
-        <div className={styles.section}>
+        <div className={styles.section} style={{ position: 'relative' }}>
           <label className={styles.label}>주소 입력 (어떤 언어든 가능)</label>
           <textarea
+            ref={inputRef}
             className={styles.textarea}
             placeholder="주소를 입력하세요 (모든 언어 지원)"
             value={inputAddress}
@@ -120,8 +257,40 @@ export default function AddressConverter() {
               setInputAddress(e.target.value)
               setError(null)
             }}
+            onKeyDown={handleKeyDown}
             rows={4}
           />
+          
+          {/* 자동완성 드롭다운 */}
+          {showAutocomplete && (
+            <div ref={autocompleteRef} className={styles.autocompleteDropdown}>
+              {isLoadingAutocomplete ? (
+                <div className={styles.autocompleteItem}>검색 중...</div>
+              ) : autocompleteCandidates.length > 0 ? (
+                autocompleteCandidates.map((candidate, index) => (
+                  <div
+                    key={index}
+                    className={`${styles.autocompleteItem} ${
+                      index === selectedIndex ? styles.autocompleteItemSelected : ''
+                    }`}
+                    onClick={() => selectCandidate(candidate)}
+                    onMouseEnter={() => setSelectedIndex(index)}
+                  >
+                    <div className={styles.autocompleteItemMain}>
+                      {candidate.formatted_address}
+                    </div>
+                    <div className={styles.autocompleteItemMeta}>
+                      <span>{candidate.country}</span>
+                      <span>{candidate.city}</span>
+                      {candidate.postal_code && <span>📮 {candidate.postal_code}</span>}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className={styles.autocompleteItem}>No address found</div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* 변환 버튼 */}
