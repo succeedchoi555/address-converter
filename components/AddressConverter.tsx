@@ -2,38 +2,47 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react'
 import styles from './AddressConverter.module.css'
+import InteractiveMap from './InteractiveMap'
 
-interface AddressCandidate {
-  country: string
-  city: string
-  street: string
+interface PlacePrediction {
+  description: string
+  place_id: string
+  main_text: string
+  secondary_text: string
+}
+
+interface GeocodeResult {
   formatted_address: string
+  place_id: string
+  latitude: number
+  longitude: number
+  country: string | null
+  locality: string | null
+  route: string | null
   postal_code: string | null
 }
 
 export default function AddressConverter() {
   const [inputAddress, setInputAddress] = useState('')
-  const [convertedAddress, setConvertedAddress] = useState('')
-  const [country, setCountry] = useState<string | null>(null)
-  const [confidence, setConfidence] = useState<number | null>(null)
-  const [notes, setNotes] = useState<string | null>(null)
-  const [isConverting, setIsConverting] = useState(false)
+  const [geocodeResult, setGeocodeResult] = useState<GeocodeResult | null>(null)
+  const [isGeocoding, setIsGeocoding] = useState(false)
   const [error, setError] = useState<string | null>(null)
   
   // 자동완성 관련 상태
-  const [autocompleteCandidates, setAutocompleteCandidates] = useState<AddressCandidate[]>([])
+  const [autocompletePredictions, setAutocompletePredictions] = useState<PlacePrediction[]>([])
   const [isLoadingAutocomplete, setIsLoadingAutocomplete] = useState(false)
   const [selectedIndex, setSelectedIndex] = useState(-1)
   const [showAutocomplete, setShowAutocomplete] = useState(false)
   const autocompleteRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const sessionTokenRef = useRef<string>(`session_${Date.now()}`)
 
-  // 자동완성 함수
+  // 자동완성 함수 (Google Places Autocomplete)
   const fetchAutocomplete = useCallback(async (query: string) => {
     const trimmed = query.trim()
     if (trimmed.length < 2) {
-      setAutocompleteCandidates([])
+      setAutocompletePredictions([])
       setShowAutocomplete(false)
       return
     }
@@ -49,20 +58,36 @@ export default function AddressConverter() {
         },
         body: JSON.stringify({
           query: trimmed,
+          sessionToken: sessionTokenRef.current,
         }),
       })
 
       if (!response.ok) {
-        setAutocompleteCandidates([])
+        const errorData = await response.json().catch(() => ({}))
+        setError(errorData.error || '주소 검색 중 오류가 발생했습니다.')
+        setAutocompletePredictions([])
         return
       }
 
       const data = await response.json()
-      setAutocompleteCandidates(data.candidates || [])
+      
+      // 에러가 있으면 표시
+      if (data.error) {
+        setError(data.error)
+        setAutocompletePredictions([])
+        return
+      }
+      
+      setAutocompletePredictions(data.predictions || [])
       setSelectedIndex(-1)
+      
+      // 에러 상태 초기화
+      if (data.predictions && data.predictions.length > 0) {
+        setError(null)
+      }
     } catch (err) {
       console.error('Autocomplete error:', err)
-      setAutocompleteCandidates([])
+      setAutocompletePredictions([])
     } finally {
       setIsLoadingAutocomplete(false)
     }
@@ -77,9 +102,9 @@ export default function AddressConverter() {
     if (inputAddress.trim().length >= 2) {
       debounceTimerRef.current = setTimeout(() => {
         fetchAutocomplete(inputAddress)
-      }, 400) // 400ms debounce
+      }, 300) // 300ms debounce
     } else {
-      setAutocompleteCandidates([])
+      setAutocompletePredictions([])
       setShowAutocomplete(false)
     }
 
@@ -109,18 +134,51 @@ export default function AddressConverter() {
     }
   }, [])
 
-  // 자동완성 항목 선택
-  const selectCandidate = useCallback((candidate: AddressCandidate) => {
-    setInputAddress(candidate.formatted_address)
-    setAutocompleteCandidates([])
-    setShowAutocomplete(false)
-    setSelectedIndex(-1)
+  // Geocoding 함수 (place_id로 정확한 주소와 좌표 가져오기)
+  const geocodePlace = useCallback(async (placeId: string) => {
+    setIsGeocoding(true)
     setError(null)
+    setShowAutocomplete(false)
+
+    try {
+      const response = await fetch('/api/geocode', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          place_id: placeId,
+        }),
+      })
+
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || '주소 정보를 가져오는데 실패했습니다.')
+      }
+
+      const result: GeocodeResult = await response.json()
+      setGeocodeResult(result)
+      setInputAddress(result.formatted_address)
+      
+      // 세션 토큰 갱신 (다음 autocomplete 요청을 위해)
+      sessionTokenRef.current = `session_${Date.now()}`
+    } catch (err: any) {
+      console.error('Geocoding error:', err)
+      setError(err.message || '주소 정보를 가져오는 중 오류가 발생했습니다.')
+      setGeocodeResult(null)
+    } finally {
+      setIsGeocoding(false)
+    }
   }, [])
+
+  // 자동완성 항목 선택
+  const selectPrediction = useCallback((prediction: PlacePrediction) => {
+    geocodePlace(prediction.place_id)
+  }, [geocodePlace])
 
   // 키보드 네비게이션
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (!showAutocomplete || autocompleteCandidates.length === 0) {
+    if (!showAutocomplete || autocompletePredictions.length === 0) {
       return
     }
 
@@ -128,7 +186,7 @@ export default function AddressConverter() {
       case 'ArrowDown':
         e.preventDefault()
         setSelectedIndex((prev) => 
-          prev < autocompleteCandidates.length - 1 ? prev + 1 : prev
+          prev < autocompletePredictions.length - 1 ? prev + 1 : prev
         )
         break
       case 'ArrowUp':
@@ -137,8 +195,8 @@ export default function AddressConverter() {
         break
       case 'Enter':
         e.preventDefault()
-        if (selectedIndex >= 0 && selectedIndex < autocompleteCandidates.length) {
-          selectCandidate(autocompleteCandidates[selectedIndex])
+        if (selectedIndex >= 0 && selectedIndex < autocompletePredictions.length) {
+          selectPrediction(autocompletePredictions[selectedIndex])
         }
         break
       case 'Escape':
@@ -146,77 +204,19 @@ export default function AddressConverter() {
         setSelectedIndex(-1)
         break
     }
-  }, [showAutocomplete, autocompleteCandidates, selectedIndex, selectCandidate])
+  }, [showAutocomplete, autocompletePredictions, selectedIndex, selectPrediction])
 
-  // 변환 함수 (영문 물류용 주소)
-  const convertAddress = useCallback(async (address: string) => {
-    const trimmed = address.trim()
-    if (trimmed.length < 3) {
-      setConvertedAddress('')
-      setCountry(null)
-      setConfidence(null)
-      setNotes(null)
-      setError(null)
-      return
-    }
-
-    setIsConverting(true)
-    setError(null)
-
-    try {
-      const response = await fetch('/api/convert', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          address: trimmed,
-        }),
-      })
-
-      if (!response.ok) {
-        const contentType = response.headers.get('content-type')
-        if (contentType && contentType.includes('application/json')) {
-          const data = await response.json()
-          throw new Error(data.reason || data.error || `서버 오류 (${response.status})`)
-        } else {
-          const text = await response.text()
-          throw new Error(`서버 오류: ${response.status} ${text.slice(0, 100)}`)
-        }
-      }
-
-      const data = await response.json()
-
-      if (data.status !== 'OK') {
-        throw new Error(data.reason || '지원 불가 주소입니다.')
-      }
-
-      setConvertedAddress(data.formatted_address || '')
-      setCountry(data.country ?? null)
-      setConfidence(typeof data.confidence === 'number' ? data.confidence : null)
-      setNotes(data.notes ?? null)
-    } catch (err: any) {
-      console.error('Conversion error:', err)
-      setError(err.message || '주소 변환 중 오류가 발생했습니다.')
-      setConvertedAddress('')
-      setCountry(null)
-      setConfidence(null)
-      setNotes(null)
-    } finally {
-      setIsConverting(false)
-    }
-  }, [])
 
   const copyToClipboard = () => {
-    if (convertedAddress) {
-      navigator.clipboard.writeText(convertedAddress)
+    if (geocodeResult?.formatted_address) {
+      navigator.clipboard.writeText(geocodeResult.formatted_address)
       alert('주소가 클립보드에 복사되었습니다!')
     }
   }
 
   const downloadAsTxt = () => {
-    if (convertedAddress) {
-      const blob = new Blob([convertedAddress], { type: 'text/plain' })
+    if (geocodeResult?.formatted_address) {
+      const blob = new Blob([geocodeResult.formatted_address], { type: 'text/plain' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -226,13 +226,6 @@ export default function AddressConverter() {
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
     }
-  }
-
-  const openGoogleMaps = () => {
-    if (!convertedAddress) return
-    const encodedAddress = encodeURIComponent(convertedAddress)
-    const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodedAddress}`
-    window.open(mapsUrl, '_blank')
   }
 
   return (
@@ -266,67 +259,68 @@ export default function AddressConverter() {
             <div ref={autocompleteRef} className={styles.autocompleteDropdown}>
               {isLoadingAutocomplete ? (
                 <div className={styles.autocompleteItem}>검색 중...</div>
-              ) : autocompleteCandidates.length > 0 ? (
-                autocompleteCandidates.map((candidate, index) => (
+              ) : autocompletePredictions.length > 0 ? (
+                autocompletePredictions.map((prediction, index) => (
                   <div
-                    key={index}
+                    key={prediction.place_id}
                     className={`${styles.autocompleteItem} ${
                       index === selectedIndex ? styles.autocompleteItemSelected : ''
                     }`}
-                    onClick={() => selectCandidate(candidate)}
+                    onClick={() => selectPrediction(prediction)}
                     onMouseEnter={() => setSelectedIndex(index)}
                   >
                     <div className={styles.autocompleteItemMain}>
-                      {candidate.formatted_address}
+                      {prediction.main_text}
                     </div>
-                    <div className={styles.autocompleteItemMeta}>
-                      <span>{candidate.country}</span>
-                      <span>{candidate.city}</span>
-                      {candidate.postal_code && <span>📮 {candidate.postal_code}</span>}
-                    </div>
+                    {prediction.secondary_text && (
+                      <div className={styles.autocompleteItemMeta}>
+                        <span>{prediction.secondary_text}</span>
+                      </div>
+                    )}
                   </div>
                 ))
-              ) : (
-                <div className={styles.autocompleteItem}>No address found</div>
-              )}
+              ) : inputAddress.trim().length >= 2 ? (
+                <div className={styles.autocompleteItem}>
+                  검색 결과가 없습니다. 다른 키워드로 시도해주세요.
+                </div>
+              ) : null}
             </div>
           )}
         </div>
 
-        {/* 변환 버튼 */}
-        <button
-          className={styles.convertButton}
-          onClick={() => convertAddress(inputAddress)}
-          disabled={!inputAddress.trim() || isConverting}
-        >
-          {isConverting ? '변환 중...' : '영문 주소로 변환'}
-        </button>
-
         {/* 로딩 상태 */}
-        {isConverting && inputAddress.trim() && (
-          <div className={styles.status}>변환 중...</div>
+        {isGeocoding && (
+          <div className={styles.status}>주소 정보를 가져오는 중...</div>
         )}
 
         {/* 에러 메시지 */}
         {error && <div className={styles.error}>{error}</div>}
 
         {/* 변환 결과 */}
-        {convertedAddress && !isConverting && (
+        {geocodeResult && !isGeocoding && (
           <div className={styles.section}>
             <label className={styles.label}>변환된 주소</label>
             <textarea
               className={styles.textarea}
-              value={convertedAddress}
+              value={geocodeResult.formatted_address}
               readOnly
               rows={4}
             />
             <div className={styles.meta}>
-              {country && <span>국가: {country}</span>}
-              {typeof confidence === 'number' && (
-                <span>신뢰도: {(confidence * 100).toFixed(0)}%</span>
-              )}
-              {notes && <span>비고: {notes}</span>}
+              {geocodeResult.country && <span>국가: {geocodeResult.country}</span>}
+              {geocodeResult.locality && <span>도시: {geocodeResult.locality}</span>}
+              {geocodeResult.route && <span>도로명: {geocodeResult.route}</span>}
             </div>
+            
+            {/* 지도 표시 */}
+            {geocodeResult.latitude && geocodeResult.longitude && (
+              <InteractiveMap
+                latitude={geocodeResult.latitude}
+                longitude={geocodeResult.longitude}
+                address={geocodeResult.formatted_address}
+              />
+            )}
+            
             <div className={styles.buttonGroup}>
               <button
                 className={styles.actionButton}
@@ -339,12 +333,6 @@ export default function AddressConverter() {
                 onClick={downloadAsTxt}
               >
                 다운로드 (.txt)
-              </button>
-              <button
-                className={styles.actionButton}
-                onClick={openGoogleMaps}
-              >
-                지도에서 위치 확인
               </button>
             </div>
           </div>

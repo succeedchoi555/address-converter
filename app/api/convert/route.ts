@@ -101,6 +101,8 @@ interface FormatterResponse {
   confidence?: number
   notes?: string | null
   reason?: string
+  latitude?: number
+  longitude?: number
 }
 
 export async function POST(request: NextRequest) {
@@ -232,7 +234,32 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // 7. 성공 응답
+    // 7. 주소 변환 성공 시 Google Geocoding API로 좌표 조회
+    if (result.status === 'OK' && result.formatted_address) {
+      const googleApiKey = process.env.GOOGLE_MAPS_API_KEY
+      if (googleApiKey) {
+        try {
+          const geocodeUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(result.formatted_address)}&key=${googleApiKey}`
+          const geocodeResponse = await fetch(geocodeUrl, { cache: 'no-store' })
+          
+          if (geocodeResponse.ok) {
+            const geocodeData = await geocodeResponse.json()
+            if (geocodeData.status === 'OK' && geocodeData.results && geocodeData.results.length > 0) {
+              const location = geocodeData.results[0].geometry?.location
+              if (location && location.lat && location.lng) {
+                result.latitude = location.lat
+                result.longitude = location.lng
+              }
+            }
+          }
+        } catch (geocodeError) {
+          // Geocoding 실패해도 주소 변환 결과는 반환
+          console.error('Geocoding error:', geocodeError)
+        }
+      }
+    }
+
+    // 8. 성공 응답
     return NextResponse.json(
       result,
       {
