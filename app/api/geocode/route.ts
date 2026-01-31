@@ -39,16 +39,17 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  const params = new URLSearchParams({
-    place_id: place_id,
-    key: GOOGLE_MAPS_API_KEY,
-    language: 'en',
-  })
-
-  const url = `https://maps.googleapis.com/maps/api/geocode/json?${params.toString()}`
-
   try {
+    // 1️⃣ place_id로 geocode
+    const params = new URLSearchParams({
+      place_id: place_id,
+      key: GOOGLE_MAPS_API_KEY,
+      language: 'en',
+    })
+
+    const url = `https://maps.googleapis.com/maps/api/geocode/json?${params.toString()}`
     const res = await fetch(url, { cache: 'no-store' })
+
     if (!res.ok) {
       return NextResponse.json(
         { error: 'Geocoding request failed' },
@@ -67,36 +68,51 @@ export async function POST(request: NextRequest) {
 
     const result = data.results[0]
     const location = result.geometry?.location
-    const addressComponents = result.address_components || []
+    let addressComponents = result.address_components || []
 
-    // 주소 구성 요소 추출
-    let country: string | null = null
-    let locality: string | null = null
-    let route: string | null = null
-    let postal_code: string | null = null
+    const getComponent = (type: string) =>
+      addressComponents.find((c: any) => c.types?.includes(type))?.long_name || null
 
-    addressComponents.forEach((component: any) => {
-      const types = component.types || []
-      if (types.includes('country')) {
-        country = component.long_name
-      } else if (types.includes('locality') || types.includes('administrative_area_level_1')) {
-        locality = component.long_name
-      } else if (types.includes('route')) {
-        route = component.long_name
-      } else if (types.includes('postal_code')) {
-        postal_code = component.long_name
+    let postal_code = getComponent('postal_code')
+
+    // 2️⃣ postal_code 없으면 → lat,lng로 reverse geocode
+    if (!postal_code && location?.lat && location?.lng) {
+      const reverseParams = new URLSearchParams({
+        latlng: `${location.lat},${location.lng}`,
+        key: GOOGLE_MAPS_API_KEY,
+        language: 'en',
+      })
+
+      const reverseUrl = `https://maps.googleapis.com/maps/api/geocode/json?${reverseParams.toString()}`
+      const reverseRes = await fetch(reverseUrl, { cache: 'no-store' })
+
+      if (reverseRes.ok) {
+        const reverseData = await reverseRes.json()
+        const reverseResult = reverseData.results?.[0]
+        if (reverseResult?.address_components) {
+          const comps2 = reverseResult.address_components
+          const postal2 = comps2.find((c: any) =>
+            c.types?.includes('postal_code')
+          )?.long_name
+
+          if (postal2) {
+            postal_code = postal2
+          }
+        }
       }
-    })
+    }
 
     const geocodeResult: GeocodeResult = {
       formatted_address: result.formatted_address || '',
       place_id: result.place_id || place_id,
       latitude: location?.lat || 0,
       longitude: location?.lng || 0,
-      country,
-      locality,
-      route,
-      postal_code,
+      country: getComponent('country'),
+      locality:
+        getComponent('locality') ||
+        getComponent('administrative_area_level_1'),
+      route: getComponent('route'),
+      postal_code: postal_code,
     }
 
     return NextResponse.json(geocodeResult)

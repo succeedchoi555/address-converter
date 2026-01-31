@@ -1,6 +1,8 @@
 import type { Metadata } from 'next'
 import Script from 'next/script'
+import Link from 'next/link'
 import './globals.css'
+import styles from './layout.module.css'
 
 export const metadata: Metadata = {
   title: 'Address Converter',
@@ -13,7 +15,7 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en">
+    <html lang="ko">
       <head>
         {/* Google AdSense */}
         <Script
@@ -23,7 +25,24 @@ export default function RootLayout({
           strategy="afterInteractive"
         />
       </head>
-      <body>{children}</body>
+      <body>
+        <nav className={styles.nav}>
+          <div className={styles.navContainer}>
+            <Link href="/" className={styles.logo}>
+              Address Converter
+            </Link>
+            <div className={styles.navLinks}>
+              <Link href="/" className={styles.navLink}>
+                홈
+              </Link>
+              <Link href="/blog" className={styles.navLink}>
+                블로그
+              </Link>
+            </div>
+          </div>
+        </nav>
+        {children}
+      </body>
     </html>
   )
 }
