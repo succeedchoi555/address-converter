@@ -232,19 +232,21 @@ export default function AddressConverter() {
     <div className={styles.container}>
       <div className={styles.header}>
         <h1 className={styles.title}>Address Converter</h1>
-        <p className={styles.subtitle}>
-          어떤 언어로 입력해도 물류/택배/우편에 바로 쓸 수 있는 영문 주소로 변환합니다.
-        </p>
+        <div className={styles.subtitle}>
+  <p>International mail, overseas shopping, and global shipping address service.</p>
+  <p>Type any place in any language to get the exact address.</p>
+  <p style={{ color: 'red', fontWeight: 'bold' }}>We never collect your personal information.</p>
+</div>
       </div>
 
       <div className={styles.content}>
         {/* 주소 입력 */}
         <div className={styles.section} style={{ position: 'relative' }}>
-          <label className={styles.label}>주소 입력 (어떤 언어든 가능)</label>
+          <label className={styles.label}>Type Any address in any language 주소 입력(어떤 언어든 가능) </label>
           <textarea
             ref={inputRef}
             className={styles.textarea}
-            placeholder="주소를 입력하세요 (모든 언어 지원)"
+            placeholder="Enter your address (All languages supported 주소를 입력하세요 (모든 언어 지원)"
             value={inputAddress}
             onChange={(e) => {
               setInputAddress(e.target.value)
