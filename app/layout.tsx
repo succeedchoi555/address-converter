@@ -33,10 +33,19 @@ export default function RootLayout({
             </Link>
             <div className={styles.navLinks}>
               <Link href="/" className={styles.navLink}>
-                홈
+                Home
               </Link>
               <Link href="/blog" className={styles.navLink}>
-                블로그
+                Blog
+              </Link>
+              <Link href="/about" className={styles.navLink}>
+                About
+              </Link>
+              <Link href="/policy" className={styles.navLink}>
+                Policy
+              </Link>
+              <Link href="/contact" className={styles.navLink}>
+                Contact
               </Link>
             </div>
           </div>
